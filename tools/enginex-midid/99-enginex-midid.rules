@@ -1,0 +1,2 @@
+# EngineX USB MIDI Controller auto-detection (e.g. Akai LPD8)
+SUBSYSTEM=="sound", KERNEL=="midiC*D*", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="enginex-midid.service"

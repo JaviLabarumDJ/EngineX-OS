@@ -1,0 +1,18 @@
+[Unit]
+Description=EngineX USB MIDI FX Controller Daemon (Akai LPD8 / RMX-1000)
+After=engine.service
+Wants=engine.service
+
+[Service]
+Type=simple
+ExecStart=/data/sc5000-custom/bin/enginex_midid
+Restart=always
+RestartSec=2
+Nice=-10
+CPUSchedulingPolicy=other
+CPUAffinity=2
+IOSchedulingClass=best-effort
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -35,6 +35,7 @@
 #include "master_limiter.h"
 #include "echo_out.h"
 #include "pioneer_fx.h"
+#include "midi_fx_shm.h"
 
 // The A32 trampoline installers: the AArch64 build (AZ04) never calls them.
 #if defined(__aarch64__)
@@ -139,10 +140,25 @@ int snd_pcm_sw_params(void *pcm, void *params) {
 static int lim_enabled, gain_enabled; // gain_enabled: #64 auto_gain=1
 static int echo_enabled;              // #104 upfader_echo=1: Echo Out on the master bus
 static int pioneer_fx_mode;           // #88 Pioneer FX emulations
+static struct sc_midi_fx_state *midi_fx_shm = NULL;
+
+static void check_midi_shm(void) {
+    if (midi_fx_shm != NULL)
+        return;
+    int fd = open(SC_MIDI_FX_SHM_PATH, O_RDWR | O_CLOEXEC);
+    if (fd >= 0) {
+        void *ptr = mmap(NULL, sizeof(struct sc_midi_fx_state), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        close(fd);
+        if (ptr != MAP_FAILED) {
+            midi_fx_shm = (struct sc_midi_fx_state *)ptr;
+        }
+    }
+}
 
 static void *lim_poll(void *arg) {
     (void)arg;
     for (;;) {
+        check_midi_shm();
         int on = 0, gain = 0, echo = 0, pioneer_fx = 0;
         FILE *f = fopen(UI_ROOT "/settings.conf", "r");
         if (f) {
@@ -414,13 +430,25 @@ static uint32_t hook_master_output(void *host, void *context, int in_channels, c
         for (int ch = 0; ch < out_channels && ch / 2 < MASTER_ECHO_PAIRS; ch += 2)
             if (out[ch]) sc_echo_planar(&master_echo[ch / 2], out[ch], ch + 1 < out_channels ? out[ch + 1] : NULL, (unsigned)frames, echo);
     }
-    // #88 Pioneer FX emulations (Spiral / Pitch Echo / Slip Roll / Dub Echo / Space)
+    // #88 Pioneer FX emulations & #180 Real-time MIDI FX (X-Pad / Scene FX)
     int pfx = __atomic_load_n(&pioneer_fx_mode, __ATOMIC_RELAXED);
+    float pfx_wet_dry = 1.0f;
+    uint32_t pfx_roll_frames = SC_PFX_ROLL_FRAMES;
+    struct sc_midi_fx_state *mshm = midi_fx_shm;
+    if (mshm && __atomic_load_n(&mshm->connected, __ATOMIC_RELAXED)) {
+        uint32_t midi_mode = __atomic_load_n(&mshm->active_mode, __ATOMIC_RELAXED);
+        if (midi_mode != SC_PFX_OFF) {
+            pfx = (int)midi_mode;
+            pfx_wet_dry = __atomic_load_n(&mshm->wet_dry, __ATOMIC_RELAXED);
+            uint32_t rf = __atomic_load_n(&mshm->roll_frames, __ATOMIC_RELAXED);
+            if (rf > 0) pfx_roll_frames = rf;
+        }
+    }
     if (out && frames > 0) { // also when OFF: lets the effect reset its state
         for (int ch = 0; ch < out_channels && ch / 2 < MASTER_PFX_PAIRS; ch += 2) {
             if (out[ch]) {
                 float *r = ch + 1 < out_channels ? out[ch + 1] : NULL;
-                sc_pioneer_fx_planar(&master_pfx[ch / 2], out[ch], r, (unsigned)frames, pfx);
+                sc_pioneer_fx_planar_ex(&master_pfx[ch / 2], out[ch], r, (unsigned)frames, pfx, pfx_wet_dry, pfx_roll_frames);
             }
         }
     }

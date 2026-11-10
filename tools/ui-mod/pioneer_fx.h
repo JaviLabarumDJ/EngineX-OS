@@ -51,6 +51,7 @@ struct sc_pioneer_fx {
     uint32_t roll_captured; /* number of frames captured, up to SC_PFX_ROLL_FRAMES */
     uint32_t roll_play_pos; /* playback index [0, SC_PFX_ROLL_FRAMES) */
     int roll_active;        /* 1 once slice is fully captured */
+    uint32_t target_roll_frames; /* dynamic slice size for X-Pad FX */
 
     /* Dub Echo: resonant bandpass (HPF + LPF) + tape saturation */
     float dub_hp_l, dub_hp_r;
@@ -156,7 +157,7 @@ static inline float sc_pfx_allpass(float *buf, uint32_t *pos, uint32_t len, floa
     return out;
 }
 
-static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float *r, unsigned frames, int mode)
+static inline void sc_pioneer_fx_planar_ex(struct sc_pioneer_fx *s, float *l, float *r, unsigned frames, int mode, float wet_dry, uint32_t roll_frames)
 {
     if (!s || !l || frames == 0)
         return;
@@ -168,8 +169,12 @@ static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float
         return;
     }
 
+    uint32_t max_roll = (roll_frames >= 2 * SC_PFX_ROLL_XFADE && roll_frames <= SC_PFX_ROLL_FRAMES)
+                        ? roll_frames : SC_PFX_ROLL_FRAMES;
+
     if (mode != s->active_mode) {
         s->active_mode = mode;
+        s->target_roll_frames = max_roll;
         s->spiral_head_a = 0.0f;
         s->spiral_lp_l = s->spiral_lp_r = 0.0f;
         s->pe_head_fifth = s->pe_head_octave = 0.0f;
@@ -193,6 +198,10 @@ static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float
         memset(s->ap2_r, 0, sizeof(s->ap2_r));
         memset(s->ap3_l, 0, sizeof(s->ap3_l));
         memset(s->ap3_r, 0, sizeof(s->ap3_r));
+    } else if (mode == SC_PFX_SLIP_ROLL && s->target_roll_frames != max_roll) {
+        s->target_roll_frames = max_roll;
+        s->roll_captured = 0;
+        s->roll_active = 0;
     }
 
     uint32_t wpos = s->write_pos;
@@ -296,14 +305,16 @@ static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float
         }
 
         case SC_PFX_SLIP_ROLL: {
-            /* Slip Roll: 12000-frame slice repeater with 64-frame crossfade & background timeline */
+            /* Slip Roll: slice repeater with 64-frame crossfade & background timeline */
+            uint32_t max_roll = (s->target_roll_frames >= 2 * SC_PFX_ROLL_XFADE && s->target_roll_frames <= SC_PFX_ROLL_FRAMES)
+                                ? s->target_roll_frames : SC_PFX_ROLL_FRAMES;
             float mag = (in_l < 0.0f ? -in_l : in_l) + (in_r < 0.0f ? -in_r : in_r);
             if (!s->roll_active) {
                 if (s->roll_captured > 0 || mag > 1.0e-4f) {
                     s->roll_buf_l[s->roll_captured] = in_l;
                     s->roll_buf_r[s->roll_captured] = in_r;
                     s->roll_captured++;
-                    if (s->roll_captured == SC_PFX_ROLL_FRAMES) {
+                    if (s->roll_captured >= max_roll) {
                         s->roll_active = 1;
                         s->roll_play_pos = 0;
                     }
@@ -317,13 +328,13 @@ static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float
                 if (p < SC_PFX_ROLL_XFADE) {
                     float fade_in = (float)p / (float)SC_PFX_ROLL_XFADE;
                     float fade_out = 1.0f - fade_in;
-                    uint32_t tail_idx = SC_PFX_ROLL_FRAMES - SC_PFX_ROLL_XFADE + p;
+                    uint32_t tail_idx = max_roll - SC_PFX_ROLL_XFADE + p;
                     rl = fade_in * rl + fade_out * s->roll_buf_l[tail_idx];
                     rr = fade_in * rr + fade_out * s->roll_buf_r[tail_idx];
                 }
                 /* Wrap before the tail: its last XFADE frames are only blended into the start,
                  * so the loop stays continuous (wrapping at FRAMES jumped back XFADE-1 samples). */
-                if (++p >= SC_PFX_ROLL_FRAMES - SC_PFX_ROLL_XFADE)
+                if (++p >= max_roll - SC_PFX_ROLL_XFADE)
                     p = 0;
                 s->roll_play_pos = p;
                 out_l = rl;
@@ -406,6 +417,16 @@ static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float
             break;
         }
 
+        if (wet_dry < 0.999f) {
+            if (wet_dry <= 0.001f) {
+                out_l = in_l;
+                out_r = in_r;
+            } else {
+                out_l = (1.0f - wet_dry) * in_l + wet_dry * out_l;
+                out_r = (1.0f - wet_dry) * in_r + wet_dry * out_r;
+            }
+        }
+
         if (++wpos == SC_PFX_RING_SIZE)
             wpos = 0;
 
@@ -415,6 +436,11 @@ static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float
     }
 
     s->write_pos = wpos;
+}
+
+static inline void sc_pioneer_fx_planar(struct sc_pioneer_fx *s, float *l, float *r, unsigned frames, int mode)
+{
+    sc_pioneer_fx_planar_ex(s, l, r, frames, mode, 1.0f, SC_PFX_ROLL_FRAMES);
 }
 
 #endif
