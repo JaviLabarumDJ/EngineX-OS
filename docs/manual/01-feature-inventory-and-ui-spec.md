@@ -87,7 +87,7 @@
 | # | 英文 / 简中 / 繁中 | 作用 | 默认 | 接口参数 | conf 键 | 备注 |
 |---|---|---|---|---|---|---|
 | 1 | Power → Turn Off / 电源 → 关机 / 電源 → 關機 | 调用原厂关机确认框（#78） | — | — | — | 按钮，不是开关。仅 5.3.0 |
-| 2 | Language / 语言 / 語言 | 界面语言 | `en` | `lang=en\|zh-Hans\|zh-Hant`（加 `restart=1`） | `lang` | 切换要重启 Engine，播放中断，屏幕有确认框 |
+| 2 | Language / 语言 / 語言 | 界面语言 | `en` | `lang=en\|zh-Hans\|zh-Hant\|es`（加 `restart=1`） | `lang` | 切换要重启 Engine，播放中断，屏幕有确认框 |
 | 3 | Waveform Style / 波形样式 / 波形樣式 | 波形配色 Denon / RGB / 3-Band | `denon` | `waveform=denon\|rgb\|3band` | `waveform` | 控制中心有同名磁贴 |
 | 4 | Streaming Quality / 流媒体音质 / 串流音質 | 下载音质 Lossless / 320kbps | `flac` | `quality=flac\|320k` | `quality` | 下一次下载起生效 |
 | 5 | NetEase Download / 网易云下载方式 / 網易雲下載方式 | 官方直下 / Deemix 优先 | `official` | `neteaseMode=official\|deemix` | `netease_mode` | Deemix 优先用来省网易云月度下载额度 |
